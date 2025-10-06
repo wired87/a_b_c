@@ -1,24 +1,40 @@
 import asyncio
 import os
-import time
+
 import ray
 from ray import serve
 
+from a_b_c.bq_agent.bq_agent import BQService
+from a_b_c.gem import GemW
 from app_utils import ENV_ID, DOMAIN
-from abc.bq_agent import BQService
+from cluster_nodes.cluster_utils.base import BaseActor
 from cluster_nodes.cluster_utils.db_worker import FBRTDBAdminWorker
-from abc.spanner_agent.spanner_agent import SpannerWorker
+from a_b_c.spanner_agent.spanner_agent import SpannerWorker
 from qf_core_base.qf_utils.all_subs import ALL_SUBS
 from utils.utils import Utils
 
 
 @ray.remote
-class CloudMaster(Utils):
-
-    def __init__(self, head, resources: list[str]):
+class CloudMaster(Utils, BaseActor):
+    """
+    Creates Core rcs:
+    BQ
+    - DB
+    - Tables for time series data (classify in ntypes)
+    SP
+    - instance
+    - db
+    - tables (just for states)
+    """
+    def __init__(
+            self,
+            world_cfg,
+            head,
+            resources: list[str],
+    ):
+        BaseActor.__init__(self)
         super().__init__()
         self.head = head
-
         self.host = {}
 
         self.rc_base_id = ENV_ID.upper()
@@ -28,12 +44,16 @@ class CloudMaster(Utils):
 
         self.domain = "http://127.0.0.1:8001" if os.name == "nt" else f"https://{DOMAIN}"
 
-        self.available_actors = {
-            "FBRTDB_ADMIN_WORKER": self.create_fbrtdb_worker,
-            "SPANNER_WORKER": self.create_spanner_worker,
-            "BQ_WORKER": self.create_bq_worker,
-        }
+        self.world_cfg = world_cfg
         self.create_actors()
+
+    def create_gem_worker(self, name):
+        ref = GemW.options(
+            lifetime="detached",
+            name=name,
+        ).remote()
+        if ref:
+            self.host[name] = ref
 
     def create_actors(self):
         for actor_id in self.resources:
@@ -41,7 +61,7 @@ class CloudMaster(Utils):
                 name=actor_id,
             )
 
-        self.await_alive()
+        self.await_alive(total_workers=self.host)
 
         print("Cloud Db Creator Creation finished")
 
@@ -49,9 +69,7 @@ class CloudMaster(Utils):
 
         # Create cloud resources
         asyncio.run(
-            self.create_rcs_wf(
-
-            )
+            self.create_rcs_wf()
         )
         print("Exit CloudCreator...")
         ray.actor.exit_actor()
@@ -65,10 +83,17 @@ class CloudMaster(Utils):
         data = {
             "/create-database": dict(
                 db_name=ENV_ID
+            ),"/create-table": dict(
+                table_names=[*ALL_SUBS, "PIXEL"]
             ),
-            "/create-table": [ALL_SUBS, "edges"]
         }
         return data
+
+
+
+
+
+
 
 
     async def get_node_schema(self):
@@ -167,11 +192,9 @@ class CloudMaster(Utils):
             )
             print("response.data", response.data)
 
-
     async def create_rcs_wf(self):
         await self.create_spanner_rcs()
         await self.create_bq_rcs()
-
 
     def create_worker(self, name):
         print(f"Create worker {name}")
@@ -213,24 +236,6 @@ class CloudMaster(Utils):
         # Build G from data
         return ref
 
-    def await_alive(self):
-        while len(self.alive_workers) != len(list(self.resources)):
-            for nid, ref in self.host.items():
-                try:
-                    if nid not in self.alive_workers:
-                        # Ping the actor with a trivial call
-                        alive: bool = ray.get(
-                            ref.ping.remote(),
-                            timeout=5
-                        )
-                        print(f"Actor {nid} is alive")
-                        if alive is True:
-                            self.alive_workers.append(nid)
-                        time.sleep(2)
-                except Exception as e:
-                    print(f"Actor is dead or unreachable: {e}")
-        print(f"{len(self.alive_workers)} / {len(list(self.resources))} ALIVE ")
-        return True
 
 
 if __name__ == "__main__":

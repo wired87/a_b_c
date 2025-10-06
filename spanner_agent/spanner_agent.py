@@ -7,19 +7,15 @@ from typing import List, Dict
 from datetime import datetime
 from fastapi import HTTPException
 
-
-# --- ENDE SIMULIERTE IMPORTE ---
 from datetime import timezone
 
-from google.cloud.spanner_v1 import param_types
+from a_b_c.spanner_agent._spanner_graph.acore import ASpannerManager
+from a_b_c.spanner_agent._spanner_graph.change_streams.main import SpannerChangeStreamer
+from a_b_c.spanner_agent._spanner_graph.create_workflow import SpannerCreator
+from a_b_c.spanner_agent._spanner_graph.g_utils import SpannerGraphManager
+from a_b_c.spanner_agent._spanner_graph.utils.timestamp import sp_timestamp
 
-from _spanner_graph.acore import ASpannerManager
-from _spanner_graph.change_streams.main import SpannerChangeStreamer
-from _spanner_graph.create_workflow import SpannerCreator
-from _spanner_graph.g_utils import SpannerGraphManager
-from _spanner_graph.utils.timestamp import sp_timestamp
-
-from app_utils import APP, ENV_ID, GCP_ID, USER_ID
+from app_utils import APP, ENV_ID, GCP_ID
 from cluster_nodes.cluster_utils.base import BaseActor
 from qf_core_base.qf_utils.all_subs import ALL_SUBS
 
@@ -31,8 +27,6 @@ from qf_core_base.qf_utils.all_subs import ALL_SUBS
 @serve.ingress(APP)
 class SpannerWorker(BaseActor):
     def __init__(self):
-        # Initialisiere die notwendigen Spanner-Helfer
-        # Verwende Dummy-Initialisierung, da die echten Klassen nicht importiert werden können
         super().__init__()
         self.spa_manager = ASpannerManager()
         self.sp_creator = SpannerCreator()
@@ -43,7 +37,6 @@ class SpannerWorker(BaseActor):
         )
 
         # Initialisiere asynchron eine Sitzung beim Start
-        self.session_ready_task = asyncio.create_task(self.spa_manager.acreate_session())
         self.project_id = GCP_ID
 
         # Statische Graph-Info für Demo
@@ -53,7 +46,10 @@ class SpannerWorker(BaseActor):
 
     async def _safe_task_run(self, func, *args, **kwargs):
         """Erstellt eine Task und wartet, um den Actor nicht zu blockieren."""
-        await self.session_ready_task  # Stellt sicher, dass die Spanner Session bereit ist
+        """
+        if self.spa_manager.session is None:
+            await self.spa_manager.acreate_session()
+        """
         return await asyncio.create_task(func(*args, **kwargs))
 
 
@@ -78,7 +74,6 @@ class SpannerWorker(BaseActor):
                 query,
                 return_as_dict=True
             )
-
         return {"table_entry": entry}
 
     @APP.post("/create-instance")
@@ -94,18 +89,27 @@ class SpannerWorker(BaseActor):
             processing_units=100
         )
         return {"message": "All resources checked and created/updated successfully! ✨"}
+
     @APP.post("/create-database")
-    async def create_resources_route(
+    async def create_database_route(
             self,
+            database_id,
             instance_id,
     ):
         ########################## INSTANCE ##########################
         ## todo craeate schema based on neighbor type
-        self.sp_creator.create_instance(
-            project_id=self.project_id,
-            instance_name=instance_id,
-            processing_units=100
-        )
+        try:
+            self.sp_creator.sp_create_database(
+                database_id,
+                instance_id,
+                update_db=True
+            )
+            if self.spa_manager.session is None:
+                await self.spa_manager.acreate_session(
+                    database_id=database_id
+                )
+        except Exception as e:
+            print(f"Err create_database_route: {e}")
         return {"message": "All resources checked and created/updated successfully! ✨"}
 
     @APP.post("/create-rcs")
@@ -117,8 +121,6 @@ class SpannerWorker(BaseActor):
             edge_table_schema,
             node_table_schema,
             graph_name: str = "DEFAULT_GRAPH",
-            change_stream_name: str = "DEFAULT_CS",
-
     ):
         """Route zur Erstellung aller Spanner-Ressourcen mit Existenzprüfung."""
 
@@ -151,7 +153,18 @@ class SpannerWorker(BaseActor):
 
     # ------------------------------------------------------------------------------------------------------------------
 
-
+    @APP.post("/create-graph")
+    async def extract_schema(self, data):
+        node_tables=data["node_tables"]
+        edge_tables=data["edge_tables"]
+        graph_name=data["graph_name"]
+        query = self.spa_manager.get_create_graph_query(
+            graph_name=graph_name,
+            node_tables=node_tables,
+            edge_tables=edge_tables,
+        )
+        await self.spa_manager.asnap(query)
+        return {"message": "Successfully created Graph"}
 
     @APP.post("/extract-schema")
     async def extract_schema(self, data):
@@ -242,10 +255,13 @@ class SpannerWorker(BaseActor):
 
         return {"message": "All resources checked and created/updated successfully! ✨"}
 
-    @APP.post("/upsert/{table_name}")
-    async def upsert_row_route(self, table_name: str, rows: List[Dict]):
+    @APP.post("/upsert")
+    async def upsert_row_route(self, payload):
         """Route zum Einfügen/Aktualisieren von Batch-Zeilen."""
         print("=========== upsert ===========")
+        data = payload["data"]
+        rows: List[Dict] = data["rows"]
+        table_name = data["table_name"]
 
         async def upsert_workflow():
             if not await self.spa_manager.acheck_table_exists(table_name):
@@ -290,32 +306,13 @@ class SpannerWorker(BaseActor):
 
     # ------------------------------------------------------------------------------------------------------------------
 
-    @APP.get("/get-neighbors/{neighbor_id}")
+    @APP.get("/get-neighbors/")
     async def get_neighbors_route(self, nid: str, graph_name):
         """Route zur Abfrage der Center-Nodes für einen gegebenen Nachbarn."""
         print("=========== get-neighbors ===========")
-        async def neighbor_workflow():
-            # Simuliere die asynchrone Ausführung des SQL-Snapshots
-            center_nodes = await asyncio.to_thread(
-                self.cs_manager.find_center_nodes_for_neighbor,
-                neighbor_id
-            )
 
-            if not center_nodes:
-                return {"message": f"No center nodes found for neighbor {neighbor_id}. 🤷"}
 
-            # Simulation der Benachrichtigung aller Center-Nodes
-            await asyncio.gather(*[
-                asyncio.to_thread(self.cs_manager.notify_center_node, node_id, {"change": True})
-                for node_id in center_nodes
-            ])
-
-            return {
-                "message": f"Found and notified {len(center_nodes)} center nodes. 🔔",
-                "center_nodes": center_nodes
-            }
-
-        return await self._safe_task_run(neighbor_workflow)
+        return {}
 
     # ------------------------------------------------------------------------------------------------------------------
 
@@ -326,13 +323,6 @@ class SpannerWorker(BaseActor):
             table_name,
     ):
         print("=============== LIST ENTRIES ===============")
-        params = {
-            "target_values": target_values
-        }
-
-        param_types_dict = {
-            "target_values": param_types.Array(param_types.STRING)
-        }
 
         query = self.spa_manager.get_entries_from_list_str(
             column_name=column_name,

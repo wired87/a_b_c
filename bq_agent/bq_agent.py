@@ -9,22 +9,20 @@ stsart bq actor at inti keep endpoit global
 """
 
 import asyncio
-
 from google.cloud import bigquery
 from fastapi.responses import StreamingResponse
 import io, csv
 
 from ray import serve
 
+from a_b_c.bq_agent._bq_core.loader.aloader import ABQHandler
 from app_utils import APP, ENV_ID
-from abc.bq_agent._bq_core.loader.aloader import ABQHandler
 from cluster_nodes.cluster_utils.base import BaseActor
-
 
 @serve.deployment(
     num_replicas=1,
     ray_actor_options={"num_cpus": .4},
-    max_ongoing_requests=100
+    max_ongoing_requests=1000
 )
 @serve.ingress(APP)
 class BQService(BaseActor):
