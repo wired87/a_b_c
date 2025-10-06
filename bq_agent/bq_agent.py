@@ -27,7 +27,7 @@ from cluster_nodes.cluster_utils.base import BaseActor
 @serve.ingress(APP)
 class BQService(BaseActor):
     def __init__(self):
-        super().__init__()
+        BaseActor.__init__(self)
         self.abq = ABQHandler(dataset=ENV_ID)
 
     @APP.get("/create-table")

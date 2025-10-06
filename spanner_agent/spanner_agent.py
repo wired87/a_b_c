@@ -27,7 +27,7 @@ from qf_core_base.qf_utils.all_subs import ALL_SUBS
 @serve.ingress(APP)
 class SpannerWorker(BaseActor):
     def __init__(self):
-        super().__init__()
+        BaseActor.__init__(self)
         self.spa_manager = ASpannerManager()
         self.sp_creator = SpannerCreator()
         self.cs_manager = SpannerChangeStreamer()
@@ -41,7 +41,7 @@ class SpannerWorker(BaseActor):
 
         # Statische Graph-Info für Demo
         self.graph_name = ENV_ID
-        print("=========== SpannerWorker initilized ===========")
+        #print("=========== SpannerWorker initilized ===========")
 
 
     async def _safe_task_run(self, func, *args, **kwargs):
