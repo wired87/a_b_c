@@ -4,10 +4,7 @@ import networkx as nx
 import ray
 import ray.serve as serve
 from typing import List, Dict
-from datetime import datetime
 from fastapi import HTTPException
-
-from datetime import timezone
 
 from a_b_c.spanner_agent._spanner_graph.acore import ASpannerManager
 from a_b_c.spanner_agent._spanner_graph.change_streams.main import ChangeStreamMaster
@@ -17,7 +14,6 @@ from a_b_c.spanner_agent._spanner_graph.g_utils import SpannerGraphManager
 from app_utils import APP, ENV_ID, GCP_ID
 from cluster_nodes.cluster_utils.base import BaseActor
 from qf_core_base.qf_utils.all_subs import ALL_SUBS
-from utils.timestamp import sp_timestamp
 
 @serve.deployment(
     num_replicas=1,
@@ -244,6 +240,7 @@ class SpannerWorker(BaseActor):
                 return {"message": "All resources checked and created/updated successfully! ✨"}
         return {"message": "Issue creating CS"}
 
+
     @APP.post("/upsert")
     async def upsert_row_route(self, payload):
         """Route zum Einfügen/Aktualisieren von Batch-Zeilen."""
@@ -265,31 +262,21 @@ class SpannerWorker(BaseActor):
 
     # ------------------------------------------------------------------------------------------------------------------
 
-    @APP.get("/read-change-stream/{change_stream_name}")
-    async def read_change_stream_route(self, change_stream_name: str, start_ts: str):
-        """Route zum Abrufen von Änderungsdatensätzen seit einem Start-Timestamp."""
+    @APP.get("/read-change-stream")
+    async def read_change_stream_route(
+            self,
+            change_stream_names:list,
+            start_ts: str
+    ):
         print("=========== read-change-stream ===========")
 
-        async def read_workflow():
-            # Die Logik in main.py (poll_change_stream) wird hier zur asynchronen Ausführung gewickelt.
-            # In einem echten Async-Manager (ASpannerManager) würde diese Logik implementiert sein.
-
-            # Da poll_change_stream nicht async ist, simulieren wir den Aufruf und die Funktionalität
-            print(f"🔍 Reading change stream {change_stream_name} starting at {start_ts}...")
-
-            # Dies simuliert das Polling und die Rückgabe von Records und dem neuen Checkpoint
-            # In der realen Implementierung müsste dies eine asynchrone API-Query sein.
-
-            # Hier müsste die Logik zum Unnesten und Extrahieren des Tabellennamens aus der Antwort erfolgen
-
-            # Simulation der Rückgabe des neuen Checkpoints
-            new_ts = datetime.now(timezone.utc).isoformat()
-
-            return {
-                "message": "Change stream read simulated.",
-                "new_checkpoint_ts": new_ts,
-                "records_count": 5  # Simulierte Anzahl von Datensätzen
-            }
+        result = await asyncio.gather(*[
+            self.cs_manager.read_change_stream(
+                stream_name,
+                start_time,
+                end_time
+            ),
+        ])
 
         return await self._safe_task_run(read_workflow)
 
@@ -299,8 +286,6 @@ class SpannerWorker(BaseActor):
     async def get_neighbors_route(self, nid: str, graph_name):
         """Route zur Abfrage der Center-Nodes für einen gegebenen Nachbarn."""
         print("=========== get-neighbors ===========")
-
-
         return {}
 
     # ------------------------------------------------------------------------------------------------------------------

@@ -11,9 +11,10 @@ from cluster_nodes.state_handler.state_handler import StateHandlerWorker
 @ray.remote
 class GlobsMaster(BaseActor):
 
-    def __init__(self):
+    def __init__(self, world_cfg):
         BaseActor.__init__(self)
         self.host = {}
+        self.world_cfg = world_cfg
         self.alive_workers = []
         self.available_actors = {
             "HEAD": self.create_head_server,
@@ -60,7 +61,9 @@ class GlobsMaster(BaseActor):
         ref = UtilsWorker.options(
             name=name,
             lifetime="detached",
-        ).remote()
+        ).remote(
+            world_cfg=self.world_cfg
+        )
         self.host[name] = ref
 
     def create_global_logger(self, name):

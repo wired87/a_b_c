@@ -17,4 +17,11 @@ Extras:
 
 """
 
+import os
+GCP_ID=os.environ.get("GCP_ID")
+GCP_REGION=os.environ.get("GCP_REGION")
+
+SP_INSTANCE_ID=os.environ.get("SP_INSTANCE_ID")
+SP_DB_ID=os.environ.get("SP_DB_ID")
+
 
