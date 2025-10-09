@@ -10,14 +10,14 @@ from fastapi import HTTPException
 from datetime import timezone
 
 from a_b_c.spanner_agent._spanner_graph.acore import ASpannerManager
-from a_b_c.spanner_agent._spanner_graph.change_streams.main import SpannerChangeStreamer
+from a_b_c.spanner_agent._spanner_graph.change_streams.main import ChangeStreamMaster
 from a_b_c.spanner_agent._spanner_graph.create_workflow import SpannerCreator
 from a_b_c.spanner_agent._spanner_graph.g_utils import SpannerGraphManager
-from a_b_c.spanner_agent._spanner_graph.utils.timestamp import sp_timestamp
 
 from app_utils import APP, ENV_ID, GCP_ID
 from cluster_nodes.cluster_utils.base import BaseActor
 from qf_core_base.qf_utils.all_subs import ALL_SUBS
+from utils.timestamp import sp_timestamp
 
 @serve.deployment(
     num_replicas=1,
@@ -28,13 +28,10 @@ from qf_core_base.qf_utils.all_subs import ALL_SUBS
 class SpannerWorker(BaseActor):
     def __init__(self):
         BaseActor.__init__(self)
+        self.sg_utils = SpannerGraphManager()
         self.spa_manager = ASpannerManager()
         self.sp_creator = SpannerCreator()
-        self.cs_manager = SpannerChangeStreamer()
-
-        self.sg_utils = SpannerGraphManager(
-            spa=self.spa_manager,
-        )
+        self.cs_manager = ChangeStreamMaster()
 
         # Initialisiere asynchron eine Sitzung beim Start
         self.project_id = GCP_ID
@@ -230,30 +227,22 @@ class SpannerWorker(BaseActor):
 
 
     @APP.post("/create-change-stream")
-    async def upsert_row_route(self, node_tables, edge_tables=None):
+    async def upsert_row_route(self, table_names, stream_type="node"):
         print("=========== create-change-stream ===========")
-
-        ncid = f"NODE_{ENV_ID}"
-        success = self.cs_manager.create_change_stream(
-            tables=node_tables,
-            start_time=sp_timestamp(),
-            cs_id=ncid
-        )
-        if success is True:
-            print(f"✅ Node Change Stream {ncid} created.")
-
-        if edge_tables is not None:
-            print("Create Edge CS")
-            ecid = f"EDGE_{ENV_ID}"
+        csid = None
+        if stream_type == "node":
+            csid = f"NODE_{ENV_ID}"
+        elif stream_type == "edge":
+            csid = f"EDGE_{ENV_ID}"
+        if csid:
             success = self.cs_manager.create_change_stream(
-                tables=edge_tables,
-                start_time=sp_timestamp(),
-                cs_id=ecid
+                name=csid,
+                table_names=table_names
             )
             if success is True:
-                print(f"✅ Edge Change Stream {ecid} created.")
-
-        return {"message": "All resources checked and created/updated successfully! ✨"}
+                print(f"✅ Change Stream {csid} created.")
+                return {"message": "All resources checked and created/updated successfully! ✨"}
+        return {"message": "Issue creating CS"}
 
     @APP.post("/upsert")
     async def upsert_row_route(self, payload):

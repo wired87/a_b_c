@@ -1,18 +1,15 @@
 import asyncio
 import os
-import time
 
 import ray
 from ray import serve
 
 from a_b_c.bq_agent.bq_agent import BQService
-from a_b_c.gem import GemW
+from a_b_c.gemw.gem import WGem
 from app_utils import ENV_ID, DOMAIN
 from cluster_nodes.cluster_utils.base import BaseActor
 from cluster_nodes.cluster_utils.db_worker import FBRTDBAdminWorker
 from a_b_c.spanner_agent.spanner_agent import SpannerWorker
-from gnn.relay import RelayStation
-from gnn.utils import EQUtils
 from god.god import God
 from qf_core_base.qf_utils.all_subs import ALL_SUBS
 from utils.utils import Utils
@@ -28,17 +25,28 @@ class CloudRcsCreator(Utils):
     async def create_spanner_rcs(self):
         print("============== CREATE SPANNER RCS ===============")
         data = await self.get_sp_create_payload()
-        for endpoint, data in data.items():
-            response = await self.apost(
-                url=f"{self.domain}{endpoint}",
-                data=data,
-            )
-            print("response.data", response.data)
-            if response.ok:
-                continue
-            else:
-                # todo error intervention
-                continue
+        for endpoint, payload in data.items():
+            if isinstance(payload, list):
+                await asyncio.gather(*[
+                    self.make_response(endpoint, p)
+                    for p in payload
+                ])
+            elif isinstance(payload, dict):
+                await self.make_response(endpoint, payload)
+        print("All Spanner rcs created successfully")
+
+    async def make_response(self, endpoint, payload):
+        response = await self.apost(
+            url=f"{self.domain}{endpoint}",
+            data=payload,
+        )
+        print("response.data", response.data)
+        if response.ok:
+            return True
+        else:
+            # todo error intervention
+            return False
+
 
 
     async def create_bq_rcs(self):
@@ -105,10 +113,16 @@ class CloudRcsCreator(Utils):
             "/load-init-state-db-from-nx": dict(
                 nx_obj_ref=G_ref
             ),
-            "/create-change-stream": dict(
-                node_tables=ALL_SUBS,
-                edge_tables=eids,
-            ),
+            "/create-change-stream": [
+                dict(
+                    table_names=ALL_SUBS,
+                    stream_type="node",
+                ),
+                dict(
+                    table_names=["edges"],
+                    stream_type="edge",
+                )
+            ],
         }
         return data
 
@@ -151,6 +165,13 @@ class CloudMaster(Utils, BaseActor):
     - instance
     - db
     - tables (just for states)
+
+
+    AND
+    uses God to create data
+
+
+    Finals state = All daa inside all resources
     """
     def __init__(
             self,
@@ -180,7 +201,7 @@ class CloudMaster(Utils, BaseActor):
         )
 
     def create_gem_worker(self, name):
-        ref = GemW.options(
+        ref = WGem.options(
             lifetime="detached",
             name=name,
         ).remote()
@@ -192,16 +213,13 @@ class CloudMaster(Utils, BaseActor):
             self.create_worker(
                 name=actor_id,
             )
-
         self.await_alive(
             total_workers=self.host
         )
-
         self.await_actor(actor_name="HEAD")
         ray.get_actor(name="HEAD").handle_initialized.remote(
             self.host
         )
-
         await self.create_rcs_wf()
         print("Exit CloudCreator...")
 
@@ -221,15 +239,7 @@ class CloudMaster(Utils, BaseActor):
 
         await self.god.main()
 
-        ref = RelayStation.options(
-            lifetime="detached",
-            name="RELAY",
-        ).remote(
-            ntype_struct=EQUtils().eq_arsenal,
-            world_cfg=self.world_cfg,
-        )
-        self.await_actor("RELAY")
-        ref.main.remote()
+
 
         self.await_actor("HEAD")
         ray.get_actor(name="HEAD").handle_initialized.remote(

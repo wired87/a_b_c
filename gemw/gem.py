@@ -3,14 +3,13 @@ import os
 import ray
 from google import genai
 
-import dotenv
-
 from cluster_nodes.cluster_utils.base import BaseActor
 
+import dotenv
 dotenv.load_dotenv()
 
 @ray.remote
-class GemW(BaseActor):
+class WGem(BaseActor):
 
     def __init__(self, model="gemini-2.5-flash"):
         BaseActor.__init__(self)
