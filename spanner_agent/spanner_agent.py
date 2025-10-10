@@ -13,7 +13,8 @@ from a_b_c.spanner_agent._spanner_graph.g_utils import SpannerGraphManager
 
 from app_utils import APP, ENV_ID, GCP_ID
 from cluster_nodes.cluster_utils.base import BaseActor
-from qf_core_base.qf_utils.all_subs import ALL_SUBS
+from qf_utils.all_subs import ALL_SUBS
+
 
 @serve.deployment(
     num_replicas=1,
@@ -191,7 +192,7 @@ class SpannerWorker(BaseActor):
 
             print("load NODE tables")
 
-            await asyncio.gather(
+            """await asyncio.gather(
                 *[
                     self.spa_manager.upsert_row(
                         batch_chunk=,
@@ -200,7 +201,7 @@ class SpannerWorker(BaseActor):
                     for nid, attrs in G.nodes(data=True)
                     if attrs.get("type") in ALL_SUBS
                 ]
-            )
+            )"""
 
             print("load EDGE tables")
             await asyncio.gather(
@@ -211,7 +212,7 @@ class SpannerWorker(BaseActor):
                             "trgt": trgt,
                             **attrs,
                         }],
-                        table=attrs.get("id").upper())
+                        table=attrs.get("nid").upper())
                     for src, trgt, attrs in G.edges(data=True)
                     if attrs.get("type") in ALL_SUBS
                 ]

@@ -10,12 +10,15 @@ from app_utils import ENV_ID
 from cluster_nodes.cluster_utils.base import BaseActor
 from cluster_nodes.cluster_utils.db_worker import FBRTDBAdminWorker
 from a_b_c.spanner_agent.spanner_agent import SpannerWorker
+from cluster_nodes.state_handler.main import StateHandler
 from god.god import God
-from qf_core_base.qf_utils.all_subs import ALL_SUBS
+from qf_utils.all_subs import ALL_SUBS
 from utils.utils import Utils
 
 @ray.remote
-class CloudMaster(Utils, BaseActor):
+class CloudMaster(
+    Utils, BaseActor, StateHandler
+):
     """
     todo create one universal creator worker and cloudupdaor workers -> connect ot cli (+docs)) e.g.: gem worker holds vector store (vs) with fetched docs (or uses google api to fetch -> process (like convert to G format) -> embed)
     Creates Core rcs:
@@ -39,6 +42,10 @@ class CloudMaster(Utils, BaseActor):
             world_cfg,
             resources: list[str],
     ):
+        StateHandler.__init__(self)
+        BaseActor.__init__(self)
+        Utils.__init__(self)
+
         self.available_actors = {
             "GEM": self.create_gem_worker,
             "FBRTDB": self.create_fbrtdb_worker,
@@ -47,21 +54,20 @@ class CloudMaster(Utils, BaseActor):
         }
         self.bq_tables=[]
 
-        BaseActor.__init__(self)
-        super().__init__()
-
         self.head = None
         self.host = {}
 
         self.resources = resources
 
         self.alive_workers = []
+        self.sp_create_graph_endp = "/sp/create-graph"
 
         self.world_cfg = world_cfg
 
         self.god = God(
             world_cfg
         )
+        print("CLOUD MASTER initiaized")
 
 
     def get_bq_table_names_to_create(self):
@@ -71,11 +77,8 @@ class CloudMaster(Utils, BaseActor):
                 self.bq_tables.append(
                     f"{ntype}_px_{i}"
                 )
+        print(f"Creating {len(self.bq_tables)} BQ Tables")
         return self.bq_tables
-
-
-
-
 
 
 
@@ -88,17 +91,21 @@ class CloudMaster(Utils, BaseActor):
             self.host[name] = ref
 
     async def create_actors(self):
+        print("============= CREATE CLOD WORKERS =============")
         for actor_id in self.resources:
             self.create_worker(
                 name=actor_id,
             )
+        print("cloud workers created")
         self.await_alive(
-            total_workers=self.host
+            id_map=list(self.host.keys())
         )
-        self.await_actor(actor_name="HEAD")
+        print("cloud workers alive")
+        self.await_alive(id_map=["HEAD"])
         ray.get_actor(name="HEAD").handle_initialized.remote(
             self.host
         )
+
         await self.create_rcs_wf()
         print("Exit CloudCreator...")
 
@@ -107,8 +114,8 @@ class CloudMaster(Utils, BaseActor):
         """
         Create Cloud Acotrs, resources and fill them
         """
+        print("========== CREATE CLOUD RCS ==========")
         self.crcs_creator = CloudRcsCreator(host=self.host)
-
         all_bq_tables = self.get_bq_table_names_to_create()
         await asyncio.gather(
             *[
@@ -118,12 +125,12 @@ class CloudMaster(Utils, BaseActor):
                 )
             ]
         )
-
+        print("All Cloud Rcs created successfully")
         await self.god.main()
 
         await self.create_sgraph()
 
-        self.await_actor("HEAD")
+        self.await_alive(["HEAD"])
         ray.get_actor(name="HEAD").handle_initialized.remote(
             {"RELAY": ref}
         )
@@ -132,6 +139,7 @@ class CloudMaster(Utils, BaseActor):
 
     async def create_sgraph(self):
         # Upsert Pixel payload
+        print("Create SGRAPH")
         payload = {
             "graph_name": ENV_ID,
             "node_tables": ALL_SUBS,
@@ -143,29 +151,7 @@ class CloudMaster(Utils, BaseActor):
             url=f"{self.domain}{self.sp_create_graph_endp}",
             data=payload
         )
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+        print("SGRAPH created successfully")
 
 
 
@@ -182,7 +168,8 @@ class CloudMaster(Utils, BaseActor):
                 print(f"Err: {e}")
 
     def create_spanner_worker(self, name):
-        ref = serve.run(SpannerWorker.options(
+        ref = serve.run(
+            SpannerWorker.options(
             name=name,
         ).bind(),
             name=name,
@@ -198,7 +185,7 @@ class CloudMaster(Utils, BaseActor):
             ).bind(),
                 name=name,
         )
-        print("BigQUERY worker deployed")
+        print("BigQuery worker deployed")
         self.host[name] = ref
 
     def create_fbrtdb_worker(self, name):

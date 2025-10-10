@@ -4,7 +4,7 @@ import os
 import ray
 
 from app_utils import ENV_ID, DOMAIN
-from qf_core_base.qf_utils.all_subs import ALL_SUBS
+from qf_utils.all_subs import ALL_SUBS
 from utils.utils import Utils
 
 
@@ -14,7 +14,7 @@ class CloudRcsCreator(Utils):
         super().__init__()
         self.host = host
 
-        self.domain = "http://127.0.0.1:8001" if os.name == "nt" else f"https://{DOMAIN}"
+        self.domain = "http://127.0.0.1:8000" if os.name == "nt" else f"https://{DOMAIN}"
 
     async def create_spanner_rcs(self):
         print("============== CREATE SPANNER RCS ===============")
@@ -104,9 +104,6 @@ class CloudRcsCreator(Utils):
                 node_table_schema=schemas[1],
                 graph_name=f"G_{ENV_ID}",
             ),
-            "/load-init-state-db-from-nx": dict(
-                nx_obj_ref=G_ref
-            ),
             "/create-change-stream": dict(
                 table_names=ALL_SUBS,
                 stream_type="node",
@@ -114,12 +111,13 @@ class CloudRcsCreator(Utils):
         }
         return data
 
-    async def get_edge_data(self):
+    def get_edge_data(self):
         print("RELAY: Get edges")
-        edge_refs = ray.get(self.host["UTILS_WORKER"].get_all_edges.remote(
-            datastore=False,
-            just_id=False,
-        ))
+        edge_refs = ray.get(
+            ray.get_actor(name="UTILS_WORKER").get_all_edges.remote(
+                just_id=False,
+            )
+        )
 
         edges: list[dict] = ray.get(edge_refs)
         eids = [eid.get("id").upper() for eid in edges]
@@ -127,7 +125,7 @@ class CloudRcsCreator(Utils):
         return new_obj_ref, eids
 
 
-    def get_bq_create_payload(self, tables_to_create):
+    def get_bq_create_payload(self, tables_to_create:list):
         """
         Database
         Tables
@@ -135,7 +133,8 @@ class CloudRcsCreator(Utils):
         data = {
             "/create-database": dict(
                 db_name=ENV_ID
-            ),"/create-table": dict(
+            ),
+            "/create-table": dict(
                 table_names=[*tables_to_create, "PIXEL"]
             ),
         }

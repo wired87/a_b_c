@@ -1,12 +1,12 @@
-import ray
+import asyncio
 
+import ray
 from cluster_nodes.cluster_utils.G import UtilsWorker
 from cluster_nodes.cluster_utils.base import BaseActor
 from cluster_nodes.cluster_utils.logger_worker import LoggerWorker
 from cluster_nodes.head import Head
 from cluster_nodes.state_handler.main import StateHandler
 from cluster_nodes.state_handler.state_handler import StateHandlerWorker
-
 
 @ray.remote
 class GlobsMaster(BaseActor):
@@ -26,19 +26,20 @@ class GlobsMaster(BaseActor):
             host=self.host,
             run=True
         )
-        self.create()
         print("GlobsMaster initiaized")
 
     def create(self):
         try:
             self.create_globs()
-            self.await_alive(
-                total_workers=self.host
+            id_map = list(self.host.keys())
+            print("id_map", id_map)
+            self.sh.await_alive(
+                id_map=id_map
             )
             print("GlobMaster Creation procedure finished")
-            self.sh.distiribute_host(
+            asyncio.run(self.sh.distiribute_host(
                 host=self.host.copy()
-            )
+            ))
             print("Exit GlobsMaster...")
         except Exception as e:
             print(f"Err GlobCreator.create: {e}")

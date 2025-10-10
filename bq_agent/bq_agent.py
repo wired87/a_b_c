@@ -30,7 +30,7 @@ class BQService(BaseActor):
         BaseActor.__init__(self)
         self.abq = ABQHandler(dataset=ENV_ID)
 
-    @APP.get("/create-table")
+    @APP.post("/create-table")
     async def create_table(self, table_names: list[str], ttype="node"):
         # todo create single query for all tables
         print("=========== create-table ===========")
@@ -39,14 +39,15 @@ class BQService(BaseActor):
             ttype=ttype
         )
 
-    @APP.get("/create-database")
-    async def create_database(self, db_name: str):
+    @APP.post("/create-database")
+    async def create_database(self, db_name: str=ENV_ID):
         print("=========== create-database ===========")
+        print("db name:", db_name)
         dataset = bigquery.Dataset(db_name)
         dataset.location = "US"
         self.abq.bqclient.create_dataset(dataset)
 
-    @APP.get("/download/{table_name}")
+    @APP.post("/download/{table_name}")
     async def download_table(self, table_name: str, limit: int = 1000):
         """
         Fetches table data from BigQuery, converts to CSV, and returns as downloadable file.
