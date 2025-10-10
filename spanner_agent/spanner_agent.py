@@ -194,8 +194,9 @@ class SpannerWorker(BaseActor):
             await asyncio.gather(
                 *[
                     self.spa_manager.upsert_row(
-                        batch_chunk=attrs,
-                        table=attrs.get("type").upper())
+                        batch_chunk=,
+                        table=attrs.get("type").upper()
+                    )
                     for nid, attrs in G.nodes(data=True)
                     if attrs.get("type") in ALL_SUBS
                 ]
@@ -265,11 +266,12 @@ class SpannerWorker(BaseActor):
     @APP.get("/read-change-stream")
     async def read_change_stream_route(
             self,
-            change_stream_names:list,
-            start_ts: str
+            data
     ):
         print("=========== read-change-stream ===========")
-
+        end_time = data["end_time"]
+        start_time = data["start_time"]
+        stream_name = data["stream_name"]
         result = await asyncio.gather(*[
             self.cs_manager.read_change_stream(
                 stream_name,
@@ -277,8 +279,12 @@ class SpannerWorker(BaseActor):
                 end_time
             ),
         ])
-
-        return await self._safe_task_run(read_workflow)
+        ref = ray.put(result)
+        print(f"Successfully retrieved changes from stream {stream_name}.")
+        return {
+            "data": ref,
+            "stream_name": stream_name,
+        }
 
     # ------------------------------------------------------------------------------------------------------------------
 

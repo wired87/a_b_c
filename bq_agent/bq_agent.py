@@ -76,7 +76,6 @@ class BQService(BaseActor):
         payload = await request.json()
         table = payload["table"]
         rows = payload["rows"]
-        upsert = payload.get("upsert", False)
         asyncio.create_task(self.abq.async_write_rows(table=table, rows=rows))
         return {"status": "ok", "rows": len(rows)}
 
