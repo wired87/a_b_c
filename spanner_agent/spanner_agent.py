@@ -6,6 +6,7 @@ import ray.serve as serve
 from typing import List, Dict
 from fastapi import HTTPException
 
+from a_b_c.spanner_agent._spanner_graph import create_default_node_table_query
 from a_b_c.spanner_agent._spanner_graph.acore import ASpannerManager
 from a_b_c.spanner_agent._spanner_graph.change_streams.main import ChangeStreamMaster
 from a_b_c.spanner_agent._spanner_graph.create_workflow import SpannerCreator
@@ -18,11 +19,22 @@ from qf_utils.all_subs import ALL_SUBS
 
 @serve.deployment(
     num_replicas=1,
-    ray_actor_options={"num_cpus": .4},
-    max_ongoing_requests=100
+    ray_actor_options={"num_cpus": .5},
+    max_ongoing_requests=1000
 )
 @serve.ingress(APP)
 class SpannerWorker(BaseActor):
+
+    """
+    production:
+    Todo cli automated agent pick right cmd and run as describe yesterday
+    feel free to do it as contribution to
+    this project
+    Diese Projekt wird uns ALLEN Wohlstand bringen
+    nicht nur 1% wie üblich
+    """
+
+
     def __init__(self):
         BaseActor.__init__(self)
         self.sg_utils = SpannerGraphManager()
@@ -47,6 +59,28 @@ class SpannerWorker(BaseActor):
         return await asyncio.create_task(func(*args, **kwargs))
 
 
+    @APP.post("/create-table")
+    async def create_table(self, data:dict):
+        print("=========== create-table ===========")
+        table_name_map:list[str] = data["table_name_map"]
+        schema:list[str] = data["table_schema"]
+        query = ""
+        for table in table_name_map:
+            query += f"{create_default_node_table_query(table_name=table)} \n"
+
+        asyncio.create_task(
+            self.spa_manager.asnap(query)
+        )
+
+        # extend schema to all tables
+        queries = self.spa_manager.add_table_schems_query(table_name_map, schema)
+        query_tasks = [self.spa_manager.asnap(query) for query in queries]
+        await asyncio.gather(*query_tasks)
+
+        print("Created Table and extended schema")
+
+
+
     @APP.post("/get-table-entry")
     async def get_table_entry(
             self,
@@ -55,6 +89,8 @@ class SpannerWorker(BaseActor):
             is_value,
             select_table_keys
     ):
+        print("=========== get-table-entry ===========")
+
         entry = None
         table_exists:bool = await self.spa_manager.acheck_table_exists(table_name)
         if table_exists is True:
@@ -68,6 +104,8 @@ class SpannerWorker(BaseActor):
                 query,
                 return_as_dict=True
             )
+        else:
+            print("Table does not exists -> create first with /create-table")
         return {"table_entry": entry}
 
     @APP.post("/create-instance")
@@ -75,7 +113,7 @@ class SpannerWorker(BaseActor):
             self,
             instance_id,
     ):
-        ########################## INSTANCE ##########################
+        print("=========== create-instance ===========")
         ## todo craeate schema based on neighbor type
         self.sp_creator.create_instance(
             project_id=self.project_id,
@@ -106,49 +144,11 @@ class SpannerWorker(BaseActor):
             print(f"Err create_database_route: {e}")
         return {"message": "All resources checked and created/updated successfully! ✨"}
 
-    @APP.post("/create-rcs")
-    async def create_resources_route(
-            self,
-            instance_id: str,
-            node_table_map,
-            edge_table_map,
-            edge_table_schema,
-            node_table_schema,
-            graph_name: str = "DEFAULT_GRAPH",
-    ):
-        """Route zur Erstellung aller Spanner-Ressourcen mit Existenzprüfung."""
-
-        async def create_workflow():
-            """
-            Get rcs
-            """
-            print(f"🏗️ Starting creation workflow for instance: {instance_id}")
-            success:bool
-            # create db & tables 
-            success = await self.spa_manager.create_core_rcs(
-                node_table_map,
-                edge_table_map,
-                edge_table_schema,
-                node_table_schema,
-            )
-
-            if success is True:
-                print("Create Spanner Graph")
-                success = self.sp_creator.create_graph(
-                    node_tables=node_table_map,
-                    edge_tables=edge_table_map,
-                    graph_name=None
-                )
-                print(f"✅ Graph {graph_name} created/recreated.")
-            print(">>> SG RCS PROCESS FINISHED")
-            return {"message": "All resources checked and created/updated successfully! ✨"}
-
-        return await self._safe_task_run(create_workflow)
-
-    # ------------------------------------------------------------------------------------------------------------------
 
     @APP.post("/create-graph")
     async def extract_schema(self, data):
+        print("=========== create-graph ===========")
+
         node_tables=data["node_tables"]
         edge_tables=data["edge_tables"]
         graph_name=data["graph_name"]
@@ -163,45 +163,19 @@ class SpannerWorker(BaseActor):
     @APP.post("/extract-schema")
     async def extract_schema(self, data):
         print("=========== extract-schema ===========")
-        if "type" in data and "obj_ref" in data:
-            schema = {}
-
-            # unapck data
-            obj_ref = data["obj_ref"]
-            schema_data = ray.get(obj_ref)
-
-            if data["type"] == "node":
-                schema = self.sg_utils.get_universell_sp_schema(
-                    node_list=schema_data
-                )
-            elif data["type"] == "edge":
-                schema = self.sg_utils.extract_universell_edge_schema(
-                    edge_list=schema_data
-                )
-            ref = ray.put(schema)
-            return ref
+        attrs = data["attrs"]
+        schema = self.sg_utils.get_spanner_schema(
+            attrs=attrs
+        )
+        return schema
 
     @APP.post("/load-init-state-db-from-nx")
     async def load_database_initial(self, nx_obj_ref):
         print("=========== load-init-state-db-from-nx ===========")
-
         try:
             #nx_obj_ref = ray.get(self.host["UTILS_WORKER"].get_G.remote())
             # BUILD G
             G:nx.Graph = ray.get(nx_obj_ref)
-
-            print("load NODE tables")
-
-            """await asyncio.gather(
-                *[
-                    self.spa_manager.upsert_row(
-                        batch_chunk=,
-                        table=attrs.get("type").upper()
-                    )
-                    for nid, attrs in G.nodes(data=True)
-                    if attrs.get("type") in ALL_SUBS
-                ]
-            )"""
 
             print("load EDGE tables")
             await asyncio.gather(
@@ -336,3 +310,50 @@ class SpannerWorker(BaseActor):
             return {"message": f"Instance {instance_id} and all contained resources have been deleted. 💥"}
 
         return await self._safe_task_run(delete_workflow)
+
+
+
+"""
+WASTELANDS
+
+
+
+@APP.post("/create-rcs")
+    async def create_resources_route(
+            self,
+            instance_id: str,
+            node_table_map,
+            node_table_schema,
+            graph_name: str = "DEFAULT_GRAPH",
+    ):
+
+        async def create_workflow():
+
+            print(f"🏗️ Starting creation workflow for instance: {instance_id}")
+            success:bool
+            # create db & tables 
+            success = await self.spa_manager.create_core_rcs(
+                node_table_map,
+                edge_table_map,
+                edge_table_schema,
+                node_table_schema,
+            )
+
+            if success is True:
+                print("Create Spanner Graph")
+                success = self.sp_creator.create_graph(
+                    node_tables=node_table_map,
+                    edge_tables=edge_table_map,
+                    graph_name=None
+                )
+                print(f"✅ Graph {graph_name} created/recreated.")
+            print(">>> SG RCS PROCESS FINISHED")
+            return {"message": "All resources checked and created/updated successfully! ✨"}
+
+        return await self._safe_task_run(create_workflow)
+
+    # ------------------------------------------------------------------------------------------------------------------
+
+
+
+"""

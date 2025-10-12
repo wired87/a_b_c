@@ -31,21 +31,37 @@ class BQService(BaseActor):
         self.abq = ABQHandler(dataset=ENV_ID)
 
     @APP.post("/create-table")
-    async def create_table(self, table_names: list[str], ttype="node"):
+    async def create_table(
+            self,
+            data:dict
+    ):
         # todo create single query for all tables
         print("=========== create-table ===========")
+        table_names=data["table_names"]
+        ttype = data["table_names"]
         self.abq.aget_create_bq_table(
             table_names=table_names,
             ttype=ttype
         )
+        print("created tables with success")
 
     @APP.post("/create-database")
-    async def create_database(self, db_name: str=ENV_ID):
+    async def create_database(self, data: dict):
         print("=========== create-database ===========")
+        db_name = data["db_name"]
         print("db name:", db_name)
-        dataset = bigquery.Dataset(db_name)
-        dataset.location = "US"
-        self.abq.bqclient.create_dataset(dataset)
+        dataset = bigquery.Dataset(
+            self.abq.get_ds_ref()
+        )
+        try:
+            dataset.location = "US"
+
+            # Use the client object to send the dataset configuration to the API
+            created_dataset = self.abq.bqclient.create_dataset(dataset)
+            print(f"Created dataset {created_dataset.full_dataset_id}")
+        except Exception as e:
+            # Handle error, e.g., if the dataset already exists (Conflict) or name is invalid
+            print(f"Error creating dataset: {e}")
 
     @APP.post("/download/{table_name}")
     async def download_table(self, table_name: str, limit: int = 1000):

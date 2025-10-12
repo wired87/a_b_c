@@ -37,7 +37,8 @@ class GlobsMaster(BaseActor):
                 id_map=id_map
             )
             print("GlobMaster Creation procedure finished")
-            asyncio.run(self.sh.distiribute_host(
+            asyncio.run(
+                self.sh.distiribute_host(
                 host=self.host.copy()
             ))
             print("Exit GlobsMaster...")

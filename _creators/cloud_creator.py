@@ -1,4 +1,5 @@
 import asyncio
+import os
 
 import ray
 from ray import serve
@@ -6,7 +7,7 @@ from ray import serve
 from a_b_c._creators.utils import CloudRcsCreator
 from a_b_c.bq_agent.bq_agent import BQService
 from a_b_c.gemw.gem import WGem
-from app_utils import ENV_ID
+from app_utils import ENV_ID, extend_glob_store, DOMAIN
 from cluster_nodes.cluster_utils.base import BaseActor
 from cluster_nodes.cluster_utils.db_worker import FBRTDBAdminWorker
 from a_b_c.spanner_agent.spanner_agent import SpannerWorker
@@ -58,6 +59,7 @@ class CloudMaster(
         self.host = {}
 
         self.resources = resources
+        self.domain = "http://127.0.0.1:8001" if os.name == "nt" else f"https://{DOMAIN}"
 
         self.alive_workers = []
         self.sp_create_graph_endp = "/sp/create-graph"
@@ -65,7 +67,7 @@ class CloudMaster(
         self.world_cfg = world_cfg
 
         self.god = God(
-            world_cfg
+            world_cfg,
         )
         print("CLOUD MASTER initiaized")
 
@@ -98,11 +100,18 @@ class CloudMaster(
             )
         print("cloud workers created")
         self.await_alive(
-            id_map=list(self.host.keys())
+            id_map=list(
+                self.host.keys()
+            )
         )
         print("cloud workers alive")
-        self.await_alive(id_map=["HEAD"])
-        ray.get_actor(name="HEAD").handle_initialized.remote(
+        self.await_alive(
+            id_map=["HEAD"]
+        )
+
+        ray.get_actor(
+            name="HEAD"
+        ).handle_initialized.remote(
             self.host
         )
 
@@ -115,25 +124,26 @@ class CloudMaster(
         Create Cloud Acotrs, resources and fill them
         """
         print("========== CREATE CLOUD RCS ==========")
-        self.crcs_creator = CloudRcsCreator(host=self.host)
-        all_bq_tables = self.get_bq_table_names_to_create()
-        await asyncio.gather(
-            *[
-                self.crcs_creator.create_spanner_rcs(),
-                self.crcs_creator.create_bq_rcs(
-                    tables_to_create=all_bq_tables
-                )
-            ]
-        )
-        print("All Cloud Rcs created successfully")
-        await self.god.main()
+        try:
+            self.crcs_creator = CloudRcsCreator(host=self.host)
 
-        await self.create_sgraph()
+            all_bq_tables = self.get_bq_table_names_to_create()
 
-        self.await_alive(["HEAD"])
-        ray.get_actor(name="HEAD").handle_initialized.remote(
-            {"RELAY": ref}
-        )
+            await asyncio.gather(
+                *[
+                    self.crcs_creator.create_spanner_rcs(),
+                    self.crcs_creator.create_bq_rcs(
+                        tables_to_create=all_bq_tables
+                    )
+                ]
+            )
+
+            print("All Cloud Rcs created successfully")
+            await self.god.main()
+
+
+        except Exception as e:
+            print(f"Err create_rcs_wf: {e}")
         ray.actor.exit_actor()
 
 
@@ -152,8 +162,6 @@ class CloudMaster(
             data=payload
         )
         print("SGRAPH created successfully")
-
-
 
 
     def create_worker(self, name):
@@ -183,7 +191,9 @@ class CloudMaster(
             BQService.options(
                 name=name,
             ).bind(),
-                name=name,
+            #app_name=ENV_ID,
+            name=name,
+            route_prefix=f"/bq"
         )
         print("BigQuery worker deployed")
         self.host[name] = ref
